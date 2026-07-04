@@ -22,6 +22,8 @@ This is not a generic "security checklist" skill. It is built for operator-style
 - referral and balance logic
 - subscription state machines
 - Telegram or Discord bots
+- web and API routes: authorization, SSRF, CORS, rate limits, uploads
+- secrets hygiene, including files deleted from the tree but alive in git history
 - background workers and polling loops
 - SQLite migrations and deploy scripts
 - admin callbacks and privileged commands

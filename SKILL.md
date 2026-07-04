@@ -1,6 +1,6 @@
 ---
 name: double-audit
-description: Run a rigorous two-pass audit of a codebase, product repo, bot, automation, or security-sensitive workflow. Use this when the user asks for an audit, security review, code review, launch readiness review, risk review, hardening pass, PR review, bug hunt, or asks whether a repo is safe to ship. The skill combines discovery, adversarial verification, prioritized findings, fix execution, regression tests, security tooling, documentation updates, and a final handoff. It is designed for practical audits that produce working fixes, not vague recommendations.
+description: Use when the user asks for an audit, security review, code review, PR review, launch readiness or risk review, hardening pass, bug hunt, or asks whether a repo is safe to ship — including codebases, bots, automations, web/API services, payment, billing, referral or subscription flows, migrations, deploy scripts, and privileged admin paths. Also use for follow-ups like "what else is risky here", "are these all the fixes", or "continue fixing the problematic places".
 ---
 
 # Double Audit
@@ -99,9 +99,12 @@ Commands often useful:
 ```bash
 git status --short --branch
 git remote -v
+git rev-parse HEAD
 git log --oneline -5
 find . -maxdepth 2 -type f | sort | sed 's#^./##'
 ```
+
+Record the audited commit hash in the report so findings stay reproducible.
 
 If the repo has uncommitted user work, do not overwrite it. Inspect first.
 
@@ -119,6 +122,8 @@ Build a compact mental model before looking for bugs:
 - tests and CI
 
 Create a one-page map in your notes. Do not report every file to the user unless useful.
+
+For large repos, do not try to read everything. Prioritize by production risk (money, auth, data, deploy), audit in slices, and list whatever was skipped under "Areas not reviewed". An honest partial audit beats a shallow full one.
 
 ### Step 2: identify trust boundaries
 
@@ -147,7 +152,7 @@ Python baseline:
 python -m compileall -q .
 python -m pytest -q
 python -m pip_audit -r requirements.txt
-bandit -q -r . -x ./.venv,./venv,./tests,./docs-site
+bandit -q -r . -x ./.venv,./venv,./tests
 ```
 
 Node baseline:
@@ -158,6 +163,15 @@ npm run lint
 npm audit --audit-level=moderate
 npm run build
 ```
+
+Secrets, any stack:
+
+```bash
+git ls-files | grep -Ei '(^|/)\.env(\..+)?$|\.(pem|key|p12)$|id_rsa'
+gitleaks detect --source . --no-banner
+```
+
+If gitleaks is not installed, do not skip the check: grep tracked files for obvious token patterns (`AKIA`, `sk-`, `xox`, `-----BEGIN`, `token=`, `password=`) and say the full scanner was unavailable.
 
 Generic:
 
@@ -199,6 +213,15 @@ Bot and automation checklist:
 - rate limits
 - polling cadence and duplicate processing
 
+Web and API checklist:
+- authentication and authorization enforced on every route, not only in the UI
+- object-level authorization: user A cannot read or mutate user B's resources by changing an id
+- SSRF on any endpoint that fetches a user-supplied URL
+- secrets absent from client bundles, templates, and committed files
+- CORS not wildcarded while credentials are allowed
+- rate limits on auth and expensive endpoints
+- file uploads validated for type and size, stored outside the web root
+
 Deploy checklist:
 - backup before schema changes
 - WAL checkpoint for SQLite
@@ -209,13 +232,26 @@ Deploy checklist:
 - root-only scripts guarded
 - dependency install conditions
 
-### Step 5: classify findings
+### Step 5: adversarial verification
+
+This is the second pass that gives the skill its name. Steps 1-4 produce candidates, not findings. For each candidate, try to kill it before it reaches the report:
+- Is there an existing guard elsewhere?
+- Is the input actually user-controlled?
+- Is the code path reachable in production?
+- Does a DB constraint already prevent it?
+- Does a background reconciler repair it?
+- Is the scanner flag a false positive?
+- Is the exploit economically meaningful?
+
+If the candidate survives, it becomes a finding. If not, downgrade it or delete it. Keep notable kills in a "false positives" section so the owner knows they were checked.
+
+### Step 6: classify surviving findings
 
 Every finding must have:
 - severity: Critical, High, Medium, Low
 - confidence: Confirmed, Likely, Hypothesis
 - impact
-- evidence
+- evidence with exact file and line
 - reproduction or code path
 - recommended fix
 - test to prove the fix
@@ -234,19 +270,6 @@ Confidence guide:
 - **Hypothesis**: plausible, needs more proof.
 
 Hypotheses should not be presented as facts.
-
-### Step 6: adversarial verification
-
-For each finding, try to kill it:
-- Is there an existing guard elsewhere?
-- Is the input actually user-controlled?
-- Is the code path reachable in production?
-- Does a DB constraint already prevent it?
-- Does a background reconciler repair it?
-- Is the scanner flag a false positive?
-- Is the exploit economically meaningful?
-
-If the finding survives, keep it. If not, downgrade or delete it.
 
 ### Step 7: fix order
 
@@ -440,6 +463,8 @@ Do not update docs first. Docs should reflect verified code, not intentions.
 
 - Never invent scan output. Run the command or say it was not run.
 - Never claim a finding is exploitable unless you verified reachability.
+- Cite the exact file and line for every finding.
+- Record the audited commit hash so the report is reproducible.
 - Never print secrets from `.env`, logs, CI, or config.
 - Never run live destructive actions without explicit approval.
 - Prefer small, reviewable PRs over one giant patch.

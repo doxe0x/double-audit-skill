@@ -65,11 +65,12 @@ If the user did not authorize writes, keep the audit read-only.
 
 ```bash
 git status --short --branch
+git rev-parse HEAD
 git log --oneline -5
 python -m compileall -q .
 python -m pytest -q
 python -m pip_audit -r requirements.txt
-bandit -q -r . -x ./.venv,./venv,./tests,./docs-site
+bandit -q -r . -x ./.venv,./venv,./tests
 ruff check .
 mypy .
 git diff --check
@@ -100,6 +101,16 @@ sqlite3 bot.db '.schema'
 ```
 
 For live production DBs, do not run write statements. Prefer copies or read-only checks.
+
+### Secrets (any stack)
+
+```bash
+git ls-files | grep -Ei '(^|/)\.env(\..+)?$|\.(pem|key|p12)$|id_rsa'
+gitleaks detect --source . --no-banner
+git log --all --diff-filter=A --name-only --pretty=format: | sort -u | grep -Ei '\.env|\.pem|id_rsa'
+```
+
+The third command catches secret files that were committed and later deleted: they are still in history. If gitleaks is unavailable, grep tracked files for token prefixes (`AKIA`, `sk-`, `xox`, `-----BEGIN`) and state that the full scanner did not run.
 
 ### GitHub PR
 
@@ -166,6 +177,32 @@ Fix pattern:
 Test pattern:
 - non-admin tries callback
 - user tries another user's id
+
+### Web and API exposure
+
+Symptoms:
+- route handler reads a resource by id without checking the owner
+- authorization decided in the frontend, API trusts the request
+- user-supplied URL fetched server-side with no scheme/host allow-list
+- API keys or config baked into the client bundle
+- `Access-Control-Allow-Origin: *` together with credentials
+- login, password reset, or expensive endpoints with no rate limit
+- upload endpoint accepts any file type or size
+
+Fix pattern:
+- ownership check next to every resource load, not at the router edge
+- server-side authorization for every state change
+- allow-list scheme and host before fetching user-supplied URLs
+- secrets only in server-side env, verified absent from build output
+- explicit origin list when credentials are allowed
+- rate limit auth and costly endpoints
+- validate upload type and size, store outside the web root
+
+Test pattern:
+- request another user's resource id with a valid session
+- call a privileged endpoint directly, bypassing the UI
+- submit an internal address (169.254.169.254, localhost) as the URL
+- grep the built client bundle for key prefixes
 
 ### Data migrations
 

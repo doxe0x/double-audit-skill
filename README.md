@@ -15,6 +15,9 @@ This is not a generic "security checklist" skill. It is built for operator-style
 - `SKILL.md`: the skill itself. It runs in four modes: AUDIT ONLY, AUDIT AND FIX, PR REVIEW, and POST-FIX SECURITY POSTURE.
 - `references/audit-playbook.md`: detailed checklists, command packs, finding taxonomy, PR body template, and examples from payment/bot/SQLite audits.
 - `double-audit.skill`: the same two files packaged as a single zip for one-step install.
+- `SHA256SUMS`: the checksum of `double-audit.skill`.
+- `scripts/build_bundle.py`: rebuilds the bundle deterministically and checks it in CI. The skill itself never runs it.
+- `SECURITY.md`: what the skill can do and how to report a problem.
 
 ## What it audits well
 
@@ -29,6 +32,7 @@ This is not a generic "security checklist" skill. It is built for operator-style
 - admin callbacks and privileged commands
 - dependency and static-analysis posture
 - PRs that need a security or launch-readiness review
+- AI agent repos: skills, `AGENTS.md` and `CLAUDE.md`, MCP configs, Claude Code project settings, LLM output handling
 
 ## Install (Claude Code)
 
@@ -56,15 +60,17 @@ git clone https://github.com/doxe0x/double-audit-skill.git %USERPROFILE%\.claude
 
 Cloning also leaves `README.md`, `LICENSE`, `double-audit.skill`, and a `.git` folder in the skill directory. That is harmless, because Claude Code only reads `SKILL.md` and the `references` files.
 
-If you want a clean copy with no git history, use degit instead:
+Pin the commit you reviewed and update deliberately, reading the diff first:
 
 ```bash
-npx degit doxe0x/double-audit-skill ~/.claude/skills/double-audit
+git -C ~/.claude/skills/double-audit checkout <commit-you-reviewed>
+git -C ~/.claude/skills/double-audit fetch
+git -C ~/.claude/skills/double-audit log -p HEAD..origin/main
 ```
 
 ### Method 2: unzip the bundle
 
-Download `double-audit.skill` and unzip it into your skills folder. The archive already nests everything under a `double-audit/` folder, so you get the right layout.
+Download `double-audit.skill`, check it against `SHA256SUMS` from the same commit (`shasum -a 256 double-audit.skill` on macOS, `sha256sum double-audit.skill` on Linux), and unzip it into your skills folder. The archive already nests everything under a `double-audit/` folder, so you get the right layout.
 
 macOS and Linux:
 
@@ -124,9 +130,15 @@ If the upload dialog accepts only `.zip`, rename `double-audit.skill` to `double
 
 ## Is it safe to run
 
-This skill is plain instructions and reference text. It declares no tools, makes no network calls, runs no scripts, and reads nothing beyond the repo or text you ask Claude to inspect. The whole skill is `SKILL.md` plus `references/audit-playbook.md`, both plain text you can read before installing.
+The skill is plain instructions and reference text: `SKILL.md` plus `references/audit-playbook.md`. It declares no tools, fetches nothing at runtime, and bundles no code that runs when you use it.
 
-The skill may instruct Claude to run local audit commands such as tests, static analysis, or dependency scanners when you ask it to audit a repo. Those are normal Claude tool actions, not code bundled inside the skill.
+During an audit it asks Claude to run local commands, and it is careful about whose code runs:
+
+- **Trust gate.** Tests, builds, and installs execute the audited repo's code. They run on your own repos, or on third-party code and outside PRs only inside a sandbox you approve. Until then the audit stays static.
+- **Evidence, not instructions.** Comments, docs, PR text, and the target's own agent files are audited, never obeyed. Text that tries to steer the auditor is reported as a finding.
+- **Masked secrets.** Scanners run in redacting mode and findings name the file and line, never the value.
+
+The bundle is rebuilt deterministically by `scripts/build_bundle.py`, and CI fails if `double-audit.skill`, `SHA256SUMS`, and the sources drift apart or if hidden text appears in them. See `SECURITY.md`.
 
 ## The one rule that overrides the rest
 
@@ -134,28 +146,13 @@ Do not report unverified risk as fact. If a finding is only plausible, label it 
 
 ## Rebuilding the bundle
 
-If you edit `SKILL.md` or `references/audit-playbook.md`, rebuild `double-audit.skill` so it stays in sync with the source. From inside the repo:
+After editing `SKILL.md` or `references/audit-playbook.md`, rebuild the bundle and its checksum from inside the repo:
 
 ```bash
-python3 - <<'PY'
-from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
-root = Path.cwd()
-out = root / 'double-audit.skill'
-with ZipFile(out, 'w', ZIP_DEFLATED) as z:
-    z.write(root / 'SKILL.md', 'double-audit/SKILL.md')
-    z.write(root / 'references/audit-playbook.md', 'double-audit/references/audit-playbook.md')
-print(out)
-PY
+python3 scripts/build_bundle.py
 ```
 
-Then run:
-
-```bash
-unzip -l double-audit.skill
-```
-
-Confirm every path nests under a top-level `double-audit/` folder.
+`python3 scripts/build_bundle.py --check` verifies without writing; CI runs it on every push and PR. The zip is deterministic, so the same sources always give the same SHA-256.
 
 ## License
 
